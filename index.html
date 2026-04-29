@@ -53,7 +53,10 @@
       const currentAudioUrl = useRef(null);
 
       useEffect(() => {
-        generateNewContent(false);
+        setItems([]);
+        setExplanation(null);
+        setExplainingId(null);
+        setErrorMessage('');
       }, [activeTab]);
 
       useEffect(() => {
@@ -238,10 +241,6 @@
               <button type="button" onClick={() => generateNewContent(true)} disabled={loading} className="bg-emerald-600 text-white px-8 py-4 rounded-2xl font-bold hover:bg-emerald-500 active:scale-95 disabled:opacity-50 transition-all shadow-lg shadow-emerald-900/20">بگەڕێ</button>
             </div>
 
-            <div className={`mb-10 flex items-start gap-2 rounded-2xl px-4 py-3 text-xs leading-relaxed ${isDarkMode ? 'bg-amber-400/10 text-amber-100' : 'bg-amber-50 text-amber-900'}`}>
-              <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-              <p>النصوص المولدة بالذكاء الاصطناعي تحتاج مراجعة المصدر قبل النشر أو الاعتماد العلمي.</p>
-            </div>
 
             {errorMessage && <div className="mb-6 rounded-2xl bg-red-500/10 px-4 py-3 text-sm font-bold text-red-500">{errorMessage}</div>}
 
