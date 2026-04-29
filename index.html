@@ -1,12 +1,341 @@
 <!doctype html>
 <html lang="ar" dir="rtl">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ڕێنمایی - عربي / کوردی سورانی</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Renmayi - Arabic / Sorani Kurdish</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "lucide-react": "https://esm.sh/lucide-react@0.468.0?external=react"
+      }
+    }
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Noto+Sans+Arabic:wght@300;400;700;900&display=swap');
+    body { margin: 0; font-family: 'Noto Sans Arabic', sans-serif; }
+    .font-serif { font-family: 'Amiri', serif; }
+    .font-kurdish { font-family: 'Noto Sans Arabic', sans-serif; }
+    .hide-scrollbar { scrollbar-width: none; }
+    .hide-scrollbar::-webkit-scrollbar { display: none; }
+    @keyframes spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    .animate-spin-slow { animation: spin-slow 12s linear infinite; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-type="module">
+    import React, { useEffect, useRef, useState } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import {
+      AlertTriangle, BookOpen, Check, CheckCircle, Compass, Copy, Library,
+      Mail, Moon, RefreshCw, Search, Sun, Users, Volume2, X
+    } from 'lucide-react';
+
+    function App() {
+      const [activeTab, setActiveTab] = useState('sahih');
+      const [isDarkMode, setIsDarkMode] = useState(true);
+      const [searchQuery, setSearchQuery] = useState('');
+      const [items, setItems] = useState([]);
+      const [loading, setLoading] = useState(false);
+      const [copiedId, setCopiedId] = useState(null);
+      const [explainingId, setExplainingId] = useState(null);
+      const [explanation, setExplanation] = useState(null);
+      const [isSpeaking, setIsSpeaking] = useState(false);
+      const [errorMessage, setErrorMessage] = useState('');
+
+      const displayedHistory = useRef([]);
+      const currentAudioUrl = useRef(null);
+
+      useEffect(() => {
+        generateNewContent(false);
+      }, [activeTab]);
+
+      useEffect(() => {
+        return () => {
+          if (currentAudioUrl.current) URL.revokeObjectURL(currentAudioUrl.current);
+        };
+      }, []);
+
+      const postJson = async (url, body, retries = 3, delay = 800) => {
+        let lastError = null;
+        for (let i = 0; i < retries; i += 1) {
+          try {
+            const response = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body)
+            });
+            const data = await response.json().catch(() => ({}));
+            if (response.ok) return data;
+            lastError = new Error(data?.error || `فشل الطلب برمز ${response.status}`);
+            if (![429, 500, 502, 503, 504].includes(response.status)) break;
+          } catch (error) {
+            lastError = error;
+          }
+          if (i < retries - 1) {
+            await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, i)));
+          }
+        }
+        throw lastError || new Error('تعذر الاتصال بالخادم.');
+      };
+
+      const parseJsonArray = (text) => {
+        if (!text) return [];
+        const cleaned = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '').trim();
+        const parsed = JSON.parse(cleaned);
+        return Array.isArray(parsed) ? parsed : [];
+      };
+
+      const normalizeItems = (content) => {
+        return content.map((item, index) => ({
+          id: `${Date.now()}-${index}`,
+          text_ar: item.text_ar || '',
+          text_ku: item.text_ku || '',
+          narrator: item.narrator || 'غير مذكور',
+          source: item.source || 'غير مذكور',
+          grading: item.grading || 'تحتاج إلى مراجعة'
+        })).filter(item => item.text_ar || item.text_ku);
+      };
+
+      const generateNewContent = async (isSearch = false) => {
+        setErrorMessage('');
+        setLoading(true);
+        setExplanation(null);
+        setExplainingId(null);
+        try {
+          const data = await postJson('/api/generate', {
+            activeTab,
+            searchQuery: isSearch ? searchQuery : '',
+            recentTexts: displayedHistory.current.slice(-10)
+          });
+          const responseText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          const normalized = normalizeItems(parseJsonArray(responseText));
+          displayedHistory.current = [
+            ...displayedHistory.current,
+            ...normalized.map(item => item.text_ar.substring(0, 40))
+          ];
+          setItems(normalized);
+        } catch (error) {
+          console.error('Content generation failed', error);
+          setItems([]);
+          setErrorMessage(error.message || 'تعذر جلب النصوص حاليا.');
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const explainText = async (item) => {
+        setErrorMessage('');
+        setExplainingId(item.id);
+        setExplanation(null);
+        try {
+          const data = await postJson('/api/explain', { text: item.text_ar });
+          setExplanation(data?.candidates?.[0]?.content?.parts?.[0]?.text || 'لم يصل شرح من النموذج.');
+        } catch (error) {
+          console.error('Explanation failed', error);
+          setExplanation(error.message || 'عذرا، تعذر جلب الشرح حاليا.');
+        }
+      };
+
+      const speakText = async (text) => {
+        if (isSpeaking || !text) return;
+        setErrorMessage('');
+        setIsSpeaking(true);
+        try {
+          const data = await postJson('/api/tts', { text });
+          const audioData = data?.candidates?.[0]?.content?.parts?.find(part => part.inlineData)?.inlineData?.data;
+          if (!audioData) throw new Error('لم يرجع النموذج ملفا صوتيا.');
+          if (currentAudioUrl.current) URL.revokeObjectURL(currentAudioUrl.current);
+          const audioBlob = pcmToWav(audioData, 24000);
+          const audioUrl = URL.createObjectURL(audioBlob);
+          currentAudioUrl.current = audioUrl;
+          const audio = new Audio(audioUrl);
+          audio.onended = () => setIsSpeaking(false);
+          audio.onerror = () => {
+            setIsSpeaking(false);
+            setErrorMessage('تعذر تشغيل الصوت.');
+          };
+          await audio.play();
+        } catch (error) {
+          console.error('TTS failed', error);
+          setIsSpeaking(false);
+          setErrorMessage(error.message || 'تعذر توليد الصوت حاليا.');
+        }
+      };
+
+      const pcmToWav = (base64Pcm, sampleRate) => {
+        const pcmData = Uint8Array.from(atob(base64Pcm), char => char.charCodeAt(0));
+        const wavHeader = new ArrayBuffer(44);
+        const view = new DataView(wavHeader);
+        const writeString = (offset, string) => {
+          for (let i = 0; i < string.length; i += 1) view.setUint8(offset + i, string.charCodeAt(i));
+        };
+        writeString(0, 'RIFF');
+        view.setUint32(4, 36 + pcmData.length, true);
+        writeString(8, 'WAVE');
+        writeString(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, 1, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, sampleRate * 2, true);
+        view.setUint16(32, 2, true);
+        view.setUint16(34, 16, true);
+        writeString(36, 'data');
+        view.setUint32(40, pcmData.length, true);
+        return new Blob([wavHeader, pcmData], { type: 'audio/wav' });
+      };
+
+      const copyToClipboard = async (ar, ku, id) => {
+        try {
+          await navigator.clipboard.writeText(`${ar}\n\n${ku}`);
+          setCopiedId(id);
+          setTimeout(() => setCopiedId(null), 2000);
+        } catch (error) {
+          console.error('Copy failed', error);
+          setErrorMessage('تعذر النسخ إلى الحافظة.');
+        }
+      };
+
+      const themeClasses = isDarkMode ? 'bg-[#020617] text-slate-100' : 'bg-slate-50 text-slate-900';
+
+      return (
+        <div dir="rtl" className={`${themeClasses} font-sans min-h-screen transition-colors duration-300 pb-10 flex flex-col`}>
+          <header className={`sticky top-0 z-50 backdrop-blur-md ${isDarkMode ? 'bg-slate-900/80 border-slate-800' : 'bg-white/80 border-slate-200'} border-b`}>
+            <div className="max-w-4xl mx-auto px-4 py-4 flex justify-between items-center gap-4">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="p-2.5 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-500/20">
+                  <Compass size={28} className="animate-spin-slow" />
+                </div>
+                <div className="min-w-0">
+                  <h1 className="text-2xl font-bold font-kurdish leading-none mb-1">ڕێنمایی</h1>
+                  <p className="text-[9px] uppercase tracking-[0.2em] opacity-50 font-bold">عربي - کوردی سورانی</p>
+                </div>
+              </div>
+              <button type="button" aria-label="تغيير الوضع الليلي" onClick={() => setIsDarkMode(!isDarkMode)} className={`p-2.5 rounded-xl transition-all ${isDarkMode ? 'bg-slate-800 text-yellow-400 hover:bg-slate-700' : 'bg-white shadow-sm text-slate-600 hover:bg-slate-100'}`}>
+                {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+              </button>
+            </div>
+            <div className="max-w-4xl mx-auto px-4 flex gap-2 pb-3 overflow-x-auto hide-scrollbar">
+              <Tab isDarkMode={isDarkMode} active={activeTab === 'sahih'} onClick={() => setActiveTab('sahih')} icon={<Library size={16} />} label="فەرموودە" />
+              <Tab isDarkMode={isDarkMode} active={activeTab === 'athar'} onClick={() => setActiveTab('athar')} icon={<Users size={16} />} label="هاوەڵان" />
+              <Tab isDarkMode={isDarkMode} active={activeTab === 'scholars'} onClick={() => setActiveTab('scholars')} icon={<BookOpen size={16} />} label="زانایان" />
+            </div>
+          </header>
+
+          <main className="max-w-3xl mx-auto w-full px-4 py-8 flex-grow">
+            <div className="flex flex-col sm:flex-row gap-2 mb-6 group">
+              <div className="relative flex-1">
+                <Search className={`absolute right-4 top-1/2 -translate-y-1/2 transition-colors ${isDarkMode ? 'text-slate-500 group-focus-within:text-emerald-400' : 'text-slate-400'}`} size={18} />
+                <input type="text" placeholder="گەڕان بەدوای بابەتەکاندا..." className={`w-full pr-12 pl-4 py-4 rounded-2xl border-0 ring-1 outline-none transition-all text-sm ${isDarkMode ? 'bg-slate-900 ring-slate-800 text-white focus:ring-emerald-500' : 'bg-white ring-slate-200 focus:ring-emerald-500 shadow-sm'}`} value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && generateNewContent(true)} />
+              </div>
+              <button type="button" onClick={() => generateNewContent(true)} disabled={loading} className="bg-emerald-600 text-white px-8 py-4 rounded-2xl font-bold hover:bg-emerald-500 active:scale-95 disabled:opacity-50 transition-all shadow-lg shadow-emerald-900/20">بگەڕێ</button>
+            </div>
+
+            <div className={`mb-10 flex items-start gap-2 rounded-2xl px-4 py-3 text-xs leading-relaxed ${isDarkMode ? 'bg-amber-400/10 text-amber-100' : 'bg-amber-50 text-amber-900'}`}>
+              <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+              <p>النصوص المولدة بالذكاء الاصطناعي تحتاج مراجعة المصدر قبل النشر أو الاعتماد العلمي.</p>
+            </div>
+
+            {errorMessage && <div className="mb-6 rounded-2xl bg-red-500/10 px-4 py-3 text-sm font-bold text-red-500">{errorMessage}</div>}
+
+            {loading ? (
+              <div className="flex flex-col items-center justify-center py-24 space-y-4">
+                <div className="w-12 h-12 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin"></div>
+                <p className="font-bold text-emerald-500 text-sm tracking-widest animate-pulse text-center font-kurdish">جار استخراج النصوص...</p>
+              </div>
+            ) : (
+              <div className="space-y-10">
+                {items.map((item) => (
+                  <article key={item.id} className={`relative overflow-hidden p-6 sm:p-8 rounded-[2rem] border transition-all duration-500 ${isDarkMode ? 'bg-slate-900/50 border-slate-800 hover:border-emerald-500/30 shadow-2xl' : 'bg-white border-slate-100 shadow-sm'}`}>
+                    <div className="absolute top-5 left-5 flex gap-2">
+                      <button type="button" onClick={() => speakText(item.text_ar)} disabled={isSpeaking} className={`p-2 rounded-full transition-all disabled:opacity-50 ${isDarkMode ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-slate-100 text-slate-500'}`} title="الاستماع للنص">
+                        <Volume2 size={20} className={isSpeaking ? 'animate-bounce' : ''} />
+                      </button>
+                    </div>
+                    <div className="mb-8 pt-8 sm:pt-0">
+                      <Divider label="العربية" />
+                      <p className={`text-2xl md:text-3xl leading-relaxed text-center font-serif ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{item.text_ar}</p>
+                    </div>
+                    <div className="mb-10 relative">
+                      <Divider label="کوردی" />
+                      <p className={`text-xl md:text-2xl leading-relaxed text-center font-kurdish ${isDarkMode ? 'text-emerald-100/80' : 'text-emerald-900'}`}>{item.text_ku}</p>
+                    </div>
+                    <div className="flex flex-col md:flex-row justify-between items-center gap-6 pt-6 border-t border-slate-700/10">
+                      <div className="text-center md:text-right">
+                        <div className="text-emerald-500 font-black mb-1 text-sm font-kurdish">{item.narrator}</div>
+                        <div className="flex flex-wrap items-center justify-center md:justify-start gap-4 text-[11px] opacity-50 font-bold">
+                          <span className="flex items-center gap-1 font-kurdish"><Library size={12} /> {item.source}</span>
+                          <span className="flex items-center gap-1 font-kurdish"><CheckCircle size={12} /> {item.grading}</span>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap justify-center gap-2">
+                        <button type="button" onClick={() => explainText(item)} className="flex items-center gap-2 px-5 py-3 rounded-2xl text-xs font-black bg-blue-500/10 text-blue-500 hover:bg-blue-500 hover:text-white transition-all group">
+                          <BookOpen size={16} className="group-hover:scale-110 transition-transform" /> واتا و سوود
+                        </button>
+                        <button type="button" onClick={() => copyToClipboard(item.text_ar, item.text_ku, item.id)} className={`flex items-center gap-2 px-5 py-3 rounded-2xl text-xs font-black transition-all active:scale-90 ${copiedId === item.id ? 'bg-green-600 text-white' : 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white'}`}>
+                          {copiedId === item.id ? <Check size={16} /> : <Copy size={16} />} {copiedId === item.id ? 'کۆپی کرا' : 'کۆپیکردن'}
+                        </button>
+                      </div>
+                    </div>
+                    {explainingId === item.id && (
+                      <div className={`mt-6 p-6 rounded-3xl relative ${isDarkMode ? 'bg-slate-800/50' : 'bg-blue-50'}`}>
+                        <button type="button" onClick={() => setExplainingId(null)} className="absolute top-4 left-4 opacity-40 hover:opacity-100"><X size={16} /></button>
+                        <h4 className="flex items-center gap-2 text-blue-500 font-black text-sm mb-3"><BookOpen size={16} /> واتا و سوودەکان</h4>
+                        {!explanation ? (
+                          <div className="flex items-center gap-2 text-sm opacity-50 animate-pulse"><RefreshCw size={14} className="animate-spin" /> خەریکە شیکردنەوە ئامادە دەکرێت...</div>
+                        ) : (
+                          <div className="text-sm leading-relaxed whitespace-pre-wrap font-kurdish opacity-80">{explanation}</div>
+                        )}
+                      </div>
+                    )}
+                  </article>
+                ))}
+                <button type="button" onClick={() => generateNewContent(false)} disabled={loading} className={`w-full py-6 rounded-3xl border-2 border-dashed transition-all flex items-center justify-center gap-3 font-bold font-kurdish disabled:opacity-50 ${isDarkMode ? 'border-slate-800 text-slate-500 hover:border-emerald-500/50 hover:text-emerald-400' : 'border-slate-200 text-slate-400 hover:border-emerald-500/50 hover:text-emerald-600'}`}>
+                  <RefreshCw size={18} /> دۆزینەوەی زیاتر
+                </button>
+              </div>
+            )}
+          </main>
+
+          <footer className={`mt-10 py-12 text-center border-t ${isDarkMode ? 'border-slate-800' : 'border-slate-200'}`}>
+            <div className="max-w-4xl mx-auto px-4">
+              <div className="flex flex-col items-center gap-4">
+                <div className="flex items-center gap-2 text-emerald-500/60 mb-2"><Compass size={24} /><span className="font-kurdish font-black tracking-widest text-lg">ڕێنمایی</span></div>
+                <p className="text-sm font-kurdish opacity-60 mb-1">© 2026 ڕێنمایی - مافی پارێزراوە</p>
+                <a href="mailto:muhammedmahmod9@gmail.com" className="flex items-center gap-2 text-sm opacity-50 hover:opacity-100 transition-opacity hover:text-emerald-500"><Mail size={14} />muhammedmahmod9@gmail.com</a>
+              </div>
+            </div>
+          </footer>
+        </div>
+      );
+    }
+
+    function Divider({ label }) {
+      return (
+        <div className="flex items-center gap-2 mb-4 opacity-30">
+          <div className="h-px bg-current flex-1"></div>
+          <span className="text-[10px] font-black uppercase tracking-tighter">{label}</span>
+        </div>
+      );
+    }
+
+    function Tab({ active, onClick, icon, label, isDarkMode }) {
+      const inactiveClasses = isDarkMode ? 'bg-slate-800/40 text-slate-400 hover:bg-slate-800' : 'bg-slate-100 text-slate-600 hover:bg-slate-200';
+      return (
+        <button type="button" onClick={onClick} className={`flex items-center gap-2 px-6 py-2.5 rounded-2xl transition-all whitespace-nowrap font-black text-[12px] font-kurdish active:scale-95 ${active ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/40' : inactiveClasses}`}>
+          {icon} {label}
+        </button>
+      );
+    }
+
+    createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
 </html>
